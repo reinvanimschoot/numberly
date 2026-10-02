@@ -166,10 +166,36 @@
 
             // ---------- model ----------
 
+            // the model is loaded from the Hugging Face model repo, not from this site.
+            // if that fails, fall back to a local copy next to this page (for testing).
+            const MODEL_URL =
+                "https://huggingface.co/reinvanimschoot/numberly/resolve/main/numberly.onnx";
+            const LOCAL_MODEL_URL = "numberly.onnx";
+
             let session;
 
             async function loadModel() {
-                session = await ort.InferenceSession.create("numberly.onnx");
+                try {
+                    session = await ort.InferenceSession.create(MODEL_URL);
+                    console.log("Loaded model from Hugging Face");
+                } catch (error) {
+                    console.warn(
+                        "Could not load model from Hugging Face, trying local copy",
+                        error,
+                    );
+                    try {
+                        session =
+                            await ort.InferenceSession.create(LOCAL_MODEL_URL);
+                        console.log("Loaded local model");
+                    } catch (localError) {
+                        console.error(
+                            "Could not load local model either",
+                            localError,
+                        );
+                        predictButton.textContent = "Model unavailable";
+                        return;
+                    }
+                }
                 predictButton.disabled = false;
                 predictButton.textContent = "Predict";
             }
