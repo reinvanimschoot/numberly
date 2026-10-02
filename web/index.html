@@ -22,6 +22,15 @@
                 margin: 0;
             }
 
+            .hint {
+                margin: 0;
+                max-width: 280px;
+                font-size: 0.875rem;
+                line-height: 1.4;
+                text-align: center;
+                color: #52525b;
+            }
+
             canvas {
                 width: 280px;
                 height: 280px;
@@ -93,6 +102,13 @@
     </head>
     <body>
         <h1>Numberly</h1>
+
+        <p class="hint">
+            Draw a single digit, from 0 to 9.<br />
+            Tip: draw a 1 as a single straight line. The model learned from
+            handwriting where a 1 usually has no hook at the top, so a hooked 1
+            is often mistaken for a 7.
+        </p>
 
         <canvas id="canvas" width="280" height="280"></canvas>
 
