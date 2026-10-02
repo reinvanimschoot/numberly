@@ -8,16 +8,17 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi>=0.142.2",
-    "python-multipart>=0.0.32",
+    "onnx>=1.23.1",
+    "onnxruntime>=1.30.0",
+    "onnxscript>=0.7.2",
     "torch>=2.14.1",
     "torchvision>=0.29.1",
-    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
 numberly-predict = "numberly.predict:main"
 numberly-train = "numberly.train:main"
+numberly-export = "numberly.export:main"
 
 [build-system]
 requires = ["uv_build>=0.12.21,<0.13.0"]

@@ -4,6 +4,7 @@
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Numberly</title>
+        <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
         <style>
             body {
                 margin: 0;
@@ -49,6 +50,11 @@
                 color: white;
             }
 
+            button:disabled {
+                opacity: 0.5;
+                cursor: default;
+            }
+
             #result {
                 min-height: 3.5rem;
                 font-size: 3rem;
@@ -92,7 +98,9 @@
 
         <div class="buttons">
             <button id="clear">Clear</button>
-            <button id="predict" class="primary">Predict</button>
+            <button id="predict" class="primary" disabled>
+                Loading model…
+            </button>
         </div>
 
         <div id="result"></div>
@@ -103,6 +111,9 @@
             const ctx = canvas.getContext("2d");
             const resultEl = document.getElementById("result");
             const barsEl = document.getElementById("bars");
+            const predictButton = document.getElementById("predict");
+
+            // ---------- drawing ----------
 
             // MNIST style: white strokes on black, thick, with round ends
             ctx.strokeStyle = "white";
@@ -153,6 +164,142 @@
             canvas.addEventListener("pointerup", () => (drawing = false));
             canvas.addEventListener("pointercancel", () => (drawing = false));
 
+            // ---------- model ----------
+
+            let session;
+
+            async function loadModel() {
+                session = await ort.InferenceSession.create("numberly.onnx");
+                predictButton.disabled = false;
+                predictButton.textContent = "Predict";
+            }
+
+            // MNIST-style preprocessing, the same steps as preprocess.py:
+            // crop to the drawing, scale the longest side to 20 pixels,
+            // and center it by center of mass on a 28x28 black image.
+            // Returns 784 numbers between 0 and 1, or null if nothing was drawn.
+            function getInput() {
+                const { width, height } = canvas;
+                const { data } = ctx.getImageData(0, 0, width, height); // RGBA: 4 values per pixel
+
+                // 1. find the bounding box of the drawing (all pixels that aren't black)
+                let minX = width,
+                    minY = height,
+                    maxX = -1,
+                    maxY = -1;
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        if (data[(y * width + x) * 4] > 0) {
+                            if (x < minX) minX = x;
+                            if (x > maxX) maxX = x;
+                            if (y < minY) minY = y;
+                            if (y > maxY) maxY = y;
+                        }
+                    }
+                }
+                if (maxX < 0) return null; // nothing drawn
+
+                const boxWidth = maxX - minX + 1;
+                const boxHeight = maxY - minY + 1;
+
+                // 2. crop and scale so the longest side is 20 pixels, keeping proportions
+                const scale = 20 / Math.max(boxWidth, boxHeight);
+                const digitWidth = Math.max(1, Math.round(boxWidth * scale));
+                const digitHeight = Math.max(1, Math.round(boxHeight * scale));
+
+                const digit = document.createElement("canvas");
+                digit.width = digitWidth;
+                digit.height = digitHeight;
+                const digitCtx = digit.getContext("2d");
+                digitCtx.imageSmoothingQuality = "high";
+                // drawImage with 9 arguments: take a rectangle from the source, draw it at a new size
+                digitCtx.drawImage(
+                    canvas,
+                    minX,
+                    minY,
+                    boxWidth,
+                    boxHeight,
+                    0,
+                    0,
+                    digitWidth,
+                    digitHeight,
+                );
+
+                // 3. find the center of mass of the white pixels (a brightness-weighted average position)
+                const digitData = digitCtx.getImageData(
+                    0,
+                    0,
+                    digitWidth,
+                    digitHeight,
+                ).data;
+                let total = 0,
+                    sumX = 0,
+                    sumY = 0;
+                for (let y = 0; y < digitHeight; y++) {
+                    for (let x = 0; x < digitWidth; x++) {
+                        const brightness =
+                            digitData[(y * digitWidth + x) * 4] / 255;
+                        total += brightness;
+                        sumX += x * brightness;
+                        sumY += y * brightness;
+                    }
+                }
+                if (total === 0) return null;
+                const centerX = sumX / total;
+                const centerY = sumY / total;
+
+                // 4. paste it on a black 28x28 image, so that the center of mass lands in the middle
+                const small = document.createElement("canvas");
+                small.width = 28;
+                small.height = 28;
+                const smallCtx = small.getContext("2d");
+                smallCtx.fillStyle = "black";
+                smallCtx.fillRect(0, 0, 28, 28);
+                smallCtx.drawImage(
+                    digit,
+                    Math.round(14 - centerX),
+                    Math.round(14 - centerY),
+                );
+
+                // 5. read the 28x28 pixels as 784 numbers between 0 and 1, row by row
+                const smallData = smallCtx.getImageData(0, 0, 28, 28).data;
+                const input = new Float32Array(28 * 28);
+                for (let i = 0; i < 28 * 28; i++) {
+                    input[i] = smallData[i * 4] / 255; // red channel = brightness, since the image is grayscale
+                }
+                return input;
+            }
+
+            function softmax(logits) {
+                const max = Math.max(...logits); // subtracting the max keeps Math.exp from overflowing
+                const exps = logits.map((x) => Math.exp(x - max));
+                const sum = exps.reduce((a, b) => a + b, 0);
+                return exps.map((x) => x / sum);
+            }
+
+            async function predict() {
+                const pixels = getInput();
+                if (pixels === null) {
+                    resultEl.textContent = "";
+                    barsEl.innerHTML = "";
+                    return; // nothing drawn yet
+                }
+
+                const input = new ort.Tensor("float32", pixels, [1, 784]);
+                const results = await session.run({ input });
+
+                const logits = Array.from(results.logits.data);
+                const probabilities = softmax(logits);
+                const prediction = probabilities.indexOf(
+                    Math.max(...probabilities),
+                );
+
+                resultEl.textContent = prediction;
+                renderBars(probabilities, prediction);
+            }
+
+            // ---------- results ----------
+
             function renderBars(probabilities, prediction) {
                 barsEl.innerHTML = "";
 
@@ -174,37 +321,15 @@
                 });
             }
 
-            async function predict() {
-                const blob = await new Promise((resolve) =>
-                    canvas.toBlob(resolve, "image/png"),
-                );
-
-                const form = new FormData();
-                form.append("file", blob, "digit.png"); // "file" must match the parameter name in predict_digit
-
-                const response = await fetch("/predict", {
-                    method: "POST",
-                    body: form,
-                });
-
-                if (!response.ok) {
-                    resultEl.textContent = "Error";
-                    return;
-                }
-
-                const data = await response.json();
-                resultEl.textContent = data.prediction;
-                renderBars(data.probabilities, data.prediction);
-            }
+            // ---------- start ----------
 
             document
                 .getElementById("clear")
                 .addEventListener("click", clearCanvas);
-            document
-                .getElementById("predict")
-                .addEventListener("click", predict);
+            predictButton.addEventListener("click", predict);
 
             clearCanvas();
+            loadModel();
         </script>
     </body>
 </html>
