@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Numberly</title>
+        <style>
+            body {
+                margin: 0;
+                padding: 2rem 1rem;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 1rem;
+                font-family: system-ui, sans-serif;
+                background: #f4f4f5;
+                color: #18181b;
+            }
+
+            h1 {
+                margin: 0;
+            }
+
+            canvas {
+                width: 280px;
+                height: 280px;
+                border-radius: 8px;
+                cursor: crosshair;
+                touch-action: none; /* don't scroll the page while drawing on a phone */
+            }
+
+            .buttons {
+                display: flex;
+                gap: 0.5rem;
+            }
+
+            button {
+                font-size: 1rem;
+                padding: 0.5rem 1.25rem;
+                border: 1px solid #d4d4d8;
+                border-radius: 6px;
+                background: white;
+                cursor: pointer;
+            }
+
+            button.primary {
+                background: #18181b;
+                border-color: #18181b;
+                color: white;
+            }
+
+            #result {
+                min-height: 3.5rem;
+                font-size: 3rem;
+                font-weight: 700;
+            }
+
+            #bars {
+                width: 280px;
+                display: grid;
+                grid-template-columns: 1.5rem 1fr 3.5rem;
+                gap: 0.25rem 0.5rem;
+                align-items: center;
+                font-variant-numeric: tabular-nums;
+            }
+
+            .bar {
+                height: 0.75rem;
+                border-radius: 4px;
+                background: #e4e4e7;
+                overflow: hidden;
+            }
+
+            .bar > div {
+                height: 100%;
+                background: #a1a1aa;
+            }
+
+            .bar.best > div {
+                background: #18181b;
+            }
+
+            .percent {
+                text-align: right;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Numberly</h1>
+
+        <canvas id="canvas" width="280" height="280"></canvas>
+
+        <div class="buttons">
+            <button id="clear">Clear</button>
+            <button id="predict" class="primary">Predict</button>
+        </div>
+
+        <div id="result"></div>
+        <div id="bars"></div>
+
+        <script>
+            const canvas = document.getElementById("canvas");
+            const ctx = canvas.getContext("2d");
+            const resultEl = document.getElementById("result");
+            const barsEl = document.getElementById("bars");
+
+            // MNIST style: white strokes on black, thick, with round ends
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 18;
+            ctx.lineCap = "round";
+            ctx.lineJoin = "round";
+
+            let drawing = false;
+
+            function clearCanvas() {
+                // a fresh canvas is transparent, so fill it with black explicitly
+                ctx.fillStyle = "black";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                resultEl.textContent = "";
+                barsEl.innerHTML = "";
+            }
+
+            // convert a pointer position to canvas pixel coordinates
+            function getPoint(event) {
+                const rect = canvas.getBoundingClientRect();
+                return {
+                    x:
+                        (event.clientX - rect.left) *
+                        (canvas.width / rect.width),
+                    y:
+                        (event.clientY - rect.top) *
+                        (canvas.height / rect.height),
+                };
+            }
+
+            canvas.addEventListener("pointerdown", (event) => {
+                drawing = true;
+                canvas.setPointerCapture(event.pointerId); // keep drawing even if the pointer leaves the canvas
+                const { x, y } = getPoint(event);
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x, y); // so a single click draws a dot
+                ctx.stroke();
+            });
+
+            canvas.addEventListener("pointermove", (event) => {
+                if (!drawing) return;
+                const { x, y } = getPoint(event);
+                ctx.lineTo(x, y);
+                ctx.stroke();
+            });
+
+            canvas.addEventListener("pointerup", () => (drawing = false));
+            canvas.addEventListener("pointercancel", () => (drawing = false));
+
+            function renderBars(probabilities, prediction) {
+                barsEl.innerHTML = "";
+
+                probabilities.forEach((p, digit) => {
+                    const label = document.createElement("div");
+                    label.textContent = digit;
+
+                    const bar = document.createElement("div");
+                    bar.className = digit === prediction ? "bar best" : "bar";
+                    const fill = document.createElement("div");
+                    fill.style.width = `${p * 100}%`;
+                    bar.appendChild(fill);
+
+                    const percent = document.createElement("div");
+                    percent.className = "percent";
+                    percent.textContent = `${(p * 100).toFixed(1)}%`;
+
+                    barsEl.append(label, bar, percent);
+                });
+            }
+
+            async function predict() {
+                const blob = await new Promise((resolve) =>
+                    canvas.toBlob(resolve, "image/png"),
+                );
+
+                const form = new FormData();
+                form.append("file", blob, "digit.png"); // "file" must match the parameter name in predict_digit
+
+                const response = await fetch("/predict", {
+                    method: "POST",
+                    body: form,
+                });
+
+                if (!response.ok) {
+                    resultEl.textContent = "Error";
+                    return;
+                }
+
+                const data = await response.json();
+                resultEl.textContent = data.prediction;
+                renderBars(data.probabilities, data.prediction);
+            }
+
+            document
+                .getElementById("clear")
+                .addEventListener("click", clearCanvas);
+            document
+                .getElementById("predict")
+                .addEventListener("click", predict);
+
+            clearCanvas();
+        </script>
+    </body>
+</html>
